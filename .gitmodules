@@ -1,0 +1,8 @@
+[submodule "zstd-rs"]
+	path = zstd-rs
+	url = https://github.com/heinrich5991/zstd-rs
+	branch = pr_blocking
+[submodule "zstd"]
+	path = zstd
+	url = https://github.com/heinrich5991/zstd-rs
+	branch = pr_blocking
