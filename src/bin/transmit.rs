@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Write;
 use std::net::Shutdown;
 use std::net::TcpStream;
+use std::path::Path;
 use std::sync::mpsc;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -40,7 +41,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let (tx, rx) = mpsc::channel();
     let mut watcher = notify::raw_watcher(tx)?;
-    watcher.watch(".", notify::RecursiveMode::NonRecursive)?;
+    let parent_dir = Path::new(filename).parent().unwrap_or(Path::new(""));
+    let parent_dir = if !parent_dir.as_os_str().is_empty() { parent_dir } else { Path::new(".") };
+    watcher.watch(parent_dir, notify::RecursiveMode::NonRecursive)?;
 
     let stream = TcpStream::connect(server)?;
     stream.set_nodelay(true)?;
