@@ -10,7 +10,4 @@ csv = "1.1.6"
 memchr = "2.4.0"
 notify = "4.0.17"
 serde = { version = "1.0.126", features = ["derive"] }
-zstd = "0.8.1"
-
-[patch.crates-io]
-zstd = { path = "zstd" }
+zstd = "0.9.0"
