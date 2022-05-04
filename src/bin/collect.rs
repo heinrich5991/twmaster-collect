@@ -15,10 +15,15 @@ use std::process;
 use std::sync::Arc;
 use std::thread;
 
+#[macro_use]
+extern crate log;
+
 fn handle_client(
     stream: TcpStream,
     token_mapping: Arc<HashMap<Vec<u8>, String>>,
 ) -> Result<(), Box<dyn Error>> {
+    debug!("new incoming connection accepted");
+
     stream.set_nodelay(true)?;
     stream.shutdown(Shutdown::Write)?;
     let mut reader = BufReader::new(zstd::Decoder::new(stream)?);
@@ -28,8 +33,12 @@ fn handle_client(
     reader.read_until(b'\n', &mut line)?;
     let filename = match token_mapping.get(&line) {
         Some(f) => f,
-        None => return Ok(()),
+        None => {
+            debug!("invalid authentication");
+            return Ok(());
+        }
     };
+    info!("new connection accepted, filename={:?}", filename);
     let temp_filename = format!("{}.tmp.{}", filename, process::id());
 
     loop {
@@ -37,17 +46,21 @@ fn handle_client(
         reader.read_until(b'\n', &mut line)?;
         if line.is_empty() {
             // Connection terminated.
+            info!("connection closed, filename={:?}", filename);
             return Ok(());
         }
         if line.last().copied() != Some(b'\n') {
             panic!("incomplete write");
         }
+        debug!("file received, writing, filename={:?}", filename);
         fs::write(&temp_filename, &line)?;
         fs::rename(&temp_filename, &filename)?;
     }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
+
     let matches = App::new("Teeworlds Serverlist Collector")
         .author("heinrich5991 <heinrich5991@gmail.com>")
         .about("Receive files without newlines")
@@ -82,6 +95,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     mem::drop(seen_filenames);
     let token_mapping = Arc::new(token_mapping);
 
+    info!("listening on {}", bindaddr);
     let server = TcpListener::bind(bindaddr)?;
     for stream in server.incoming() {
         let stream = stream?;

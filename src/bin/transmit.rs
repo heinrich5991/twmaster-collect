@@ -11,7 +11,12 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::sync::mpsc;
 
+#[macro_use]
+extern crate log;
+
 fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
+
     let matches = App::new("Teeworlds Serverlist Transmitter")
         .author("heinrich5991 <heinrich5991@gmail.com>")
         .about("Repeatedly send a file without newlines to a remote location")
@@ -43,9 +48,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut watcher = notify::raw_watcher(tx)?;
     let parent_dir = Path::new(filename).parent().unwrap_or(Path::new(""));
     let parent_dir = if !parent_dir.as_os_str().is_empty() { parent_dir } else { Path::new(".") };
+    info!("watching parent directory {:?}", parent_dir);
     watcher.watch(parent_dir, notify::RecursiveMode::NonRecursive)?;
 
+    info!("connecting to {}", server);
     let stream = TcpStream::connect(server)?;
+    info!("connected");
     stream.set_nodelay(true)?;
     stream.shutdown(Shutdown::Read)?;
     let mut stream = zstd::Encoder::new(stream, 0)?.auto_finish();
@@ -64,15 +72,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             contents.push(b'\n');
         }
 
+        debug!("sending file");
         stream.write_all(&contents)?;
         stream.flush()?;
 
+        debug!("waiting for file changes");
         loop {
             match rx.recv().unwrap() {
                 notify::RawEvent { path: Some(p), op: Ok(op), .. } if p.file_name() == Some(OsStr::new(filename)) && op.contains(notify::Op::RENAME) => break,
                 notify::RawEvent { path: Some(_), op: Ok(_), .. } => continue,
                 weird => {
-                    println!("weird event: {:?}", weird);
+                    warn!("weird event: {:?}", weird);
                     continue;
                 },
             }
