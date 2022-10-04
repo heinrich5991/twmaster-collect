@@ -1,63 +1,57 @@
 use clap::App;
 use clap::Arg;
-use memchr::memchr;
-use notify::Watcher;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::error::Error;
-use std::ffi::OsStr;
 use std::fs;
-use std::io::Write;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::mem;
 use std::net::Shutdown;
+use std::net::TcpListener;
 use std::net::TcpStream;
-use std::path::Path;
-use std::sync::mpsc;
+use std::path::PathBuf;
+use std::process;
+use std::sync::Arc;
+use std::sync::Condvar;
+use std::sync::Mutex;
+use std::thread;
 
 #[macro_use]
 extern crate log;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::init();
+struct FileContents {
+    update_no: u64,
+    contents: Arc<[u8]>,
+}
 
-    let matches = App::new("Teeworlds Serverlist Transmitter")
-        .author("heinrich5991 <heinrich5991@gmail.com>")
-        .about("Repeatedly send a file without newlines to a remote location")
-        .arg(Arg::with_name("file")
-            .short("f")
-            .long("file")
-            .takes_value(true)
-            .value_name("FILE")
-            .default_value("servers.json")
-            .help("File to watch")
-        )
-        .arg(Arg::with_name("server")
-            .value_name("SERVER")
-            .required(true)
-            .help("Server to connect to via TCP")
-        )
-        .arg(Arg::with_name("token")
-            .value_name("TOKEN")
-            .required(true)
-            .help("Token to authenticate against the server")
-        )
-        .get_matches();
+struct FileInfo {
+    filename: PathBuf,
+    contents: Mutex<FileContents>,
+    notifier: Condvar,
+}
 
-    let filename = matches.value_of_os("file").unwrap();
-    let server = matches.value_of("server").unwrap();
-    let token = matches.value_of("token").unwrap();
+fn handle_client(
+    stream: TcpStream,
+    token_mapping: Arc<HashMap<Vec<u8>, FileInfo>>,
+) -> Result<(), Box<dyn Error>> {
+    debug!("new incoming connection accepted");
 
-    let (tx, rx) = mpsc::channel();
-    let mut watcher = notify::raw_watcher(tx)?;
-    let parent_dir = Path::new(filename).parent().unwrap_or(Path::new(""));
-    let parent_dir = if !parent_dir.as_os_str().is_empty() { parent_dir } else { Path::new(".") };
-    info!("watching parent directory {:?}", parent_dir);
-    watcher.watch(parent_dir, notify::RecursiveMode::NonRecursive)?;
-
-    info!("connecting to {}", server);
-    let stream = TcpStream::connect(server)?;
-    info!("connected");
     stream.set_nodelay(true)?;
-    stream.shutdown(Shutdown::Read)?;
+
+    let mut line = Vec::new();
+    let token = BufReader::new(stream).read_until(b'\n', &mut line)?;
+
+    let info = match token_mapping.get(&line) {
+        Some(i) => i,
+        None => {
+            debug!("invalid authentication");
+            return Ok(());
+        }
+    };
+    info!("new connection accepted, filename={:?}", info.filename);
+
     let mut stream = zstd::Encoder::new(stream, 0)?.auto_finish();
-    stream.write_all(format!("twc1 {}\n", token).as_bytes())?;
     stream.flush()?;
 
     loop {
@@ -88,4 +82,76 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+    */
+}
+    /*
+    let mut reader = BufReader::new(zstd::Decoder::new(stream)?);
+    let mut line = Vec::new();
+
+    line.clear();
+    reader.read_until(b'\n', &mut line)?;
+    let mut current_update = *info.update_count.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        fs::read(&info.filename)?;
+        info.update_count.lock().unwrap_or_else(|e| e.into_inner())
+        line.clear();
+        reader.read_until(b'\n', &mut line)?;
+        if line.is_empty() {
+            // Connection terminated.
+            info!("connection closed, filename={:?}", filename);
+            return Ok(());
+        }
+        if line.last().copied() != Some(b'\n') {
+            panic!("incomplete write");
+        }
+        debug!("file received, writing, filename={:?}", filename);
+        fs::write(&temp_filename, &line)?;
+        fs::rename(&temp_filename, &filename)?;
+    }
+*/
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    /*
+    env_logger::init();
+
+    let matches = App::new("Teeworlds Serverlist Collector")
+        .author("heinrich5991 <heinrich5991@gmail.com>")
+        .about("Transmit files without newlines")
+        .arg(Arg::with_name("bindaddr")
+            .value_name("BINDADDR")
+            .required(true)
+            .help("Address to listen on")
+        )
+        .arg(Arg::with_name("token_file")
+            .value_name("TOKEN_FILE")
+            .required(true)
+            .multiple(true)
+            .help("List of <TOKEN>:<FILENAME> pairs")
+        )
+        .get_matches();
+
+    let bindaddr = matches.value_of("bindaddr").unwrap();
+    let token_file = matches.values_of("token_file").unwrap();
+
+    let mut seen_filenames = HashSet::new();
+    let mut token_mapping = HashMap::new();
+    for token_line in csv::Reader::from_path(tokenfile)?.into_deserialize() {
+        let token_line: TokenLine = token_line?;
+        let protocol_start = format!("twc2 {}\n", token_line.token).into_bytes();
+        assert!(token_mapping.insert(protocol_start, token_line.filename.clone()).is_none(), "duplicate token");
+        assert!(seen_filenames.insert(token_line.filename), "duplicate filename");
+    }
+    mem::drop(seen_filenames);
+    let token_mapping = Arc::new(token_mapping);
+
+    info!("listening on {}", bindaddr);
+    let server = TcpListener::bind(bindaddr)?;
+    for stream in server.incoming() {
+        let stream = stream?;
+        let token_mapping = token_mapping.clone();
+        thread::spawn(move || handle_client(stream, token_mapping).unwrap());
+    }
+*/
+    Ok(())
 }

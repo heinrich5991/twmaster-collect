@@ -1,45 +1,56 @@
 use clap::App;
 use clap::Arg;
-use serde::Deserialize;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::mem;
+use std::io::Write;
 use std::net::Shutdown;
-use std::net::TcpListener;
 use std::net::TcpStream;
 use std::process;
-use std::sync::Arc;
-use std::thread;
 
 #[macro_use]
 extern crate log;
 
-fn handle_client(
-    stream: TcpStream,
-    token_mapping: Arc<HashMap<Vec<u8>, String>>,
-) -> Result<(), Box<dyn Error>> {
-    debug!("new incoming connection accepted");
+fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
 
+    let matches = App::new("Teeworlds Serverlist Transmitter")
+        .author("heinrich5991 <heinrich5991@gmail.com>")
+        .about("Receive a file without newlines")
+        .arg(Arg::with_name("server")
+            .value_name("SERVER")
+            .required(true)
+            .help("Server to connect to via TCP")
+        )
+        .arg(Arg::with_name("token")
+            .value_name("TOKEN")
+            .required(true)
+            .help("Token to authenticate against the server")
+        )
+        .arg(Arg::with_name("file")
+            .value_name("FILE")
+            .required(true)
+            .help("File to write to")
+        )
+        .get_matches();
+
+    let server = matches.value_of("server").unwrap();
+    let token = matches.value_of("token").unwrap();
+    let filename = matches.value_of_os("file").unwrap();
+
+    info!("connecting to {}", server);
+    let mut stream = TcpStream::connect(server)?;
+    info!("connected");
     stream.set_nodelay(true)?;
+    stream.write_all(format!("twc2 {}\n", token).as_bytes())?;
     stream.shutdown(Shutdown::Write)?;
+
     let mut reader = BufReader::new(zstd::Decoder::new(stream)?);
     let mut line = Vec::new();
 
-    line.clear();
-    reader.read_until(b'\n', &mut line)?;
-    let filename = match token_mapping.get(&line) {
-        Some(f) => f,
-        None => {
-            debug!("invalid authentication");
-            return Ok(());
-        }
-    };
-    info!("new connection accepted, filename={:?}", filename);
-    let temp_filename = format!("{}.tmp.{}", filename, process::id());
+    let mut temp_filename = filename.to_owned();
+    temp_filename.push(&format!(".tmp.{}", process::id()));
 
     loop {
         line.clear();
@@ -56,51 +67,50 @@ fn handle_client(
         fs::write(&temp_filename, &line)?;
         fs::rename(&temp_filename, &filename)?;
     }
-}
+    /*
+    let (tx, rx) = mpsc::channel();
+    let mut watcher = notify::raw_watcher(tx)?;
+    let parent_dir = Path::new(filename).parent().unwrap_or(Path::new(""));
+    let parent_dir = if !parent_dir.as_os_str().is_empty() { parent_dir } else { Path::new(".") };
+    info!("watching parent directory {:?}", parent_dir);
+    watcher.watch(parent_dir, notify::RecursiveMode::NonRecursive)?;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::init();
+    info!("connecting to {}", server);
+    let stream = TcpStream::connect(server)?;
+    info!("connected");
+    stream.set_nodelay(true)?;
+    stream.shutdown(Shutdown::Read)?;
+    let mut stream = zstd::Encoder::new(stream, 0)?.auto_finish();
+    stream.write_all(format!("twc1 {}\n", token).as_bytes())?;
+    stream.flush()?;
 
-    let matches = App::new("Teeworlds Serverlist Collector")
-        .author("heinrich5991 <heinrich5991@gmail.com>")
-        .about("Receive files without newlines")
-        .arg(Arg::with_name("bindaddr")
-            .value_name("BINDADDR")
-            .required(true)
-            .help("Address to listen on")
-        )
-        .arg(Arg::with_name("tokenfile")
-            .value_name("TOKENFILE")
-            .required(true)
-            .help("File with list of output-filename:token pairs, one per line")
-        )
-        .get_matches();
+    loop {
+        let mut contents = fs::read(filename)?;
+        // Ensure newline.
+        let newline_pos = memchr(b'\n', &contents);
+        if let Some(p) = newline_pos {
+            if p + 1 != contents.len() {
+                panic!("{:?} contains internal newlines at byte {}", filename, p);
+            }
+        } else {
+            contents.push(b'\n');
+        }
 
-    let bindaddr = matches.value_of("bindaddr").unwrap();
-    let tokenfile = matches.value_of_os("tokenfile").unwrap();
+        debug!("sending file");
+        stream.write_all(&contents)?;
+        stream.flush()?;
 
-    #[derive(Deserialize)]
-    struct TokenLine {
-        filename: String,
-        token: String,
+        debug!("waiting for file changes");
+        loop {
+            match rx.recv().unwrap() {
+                notify::RawEvent { path: Some(p), op: Ok(op), .. } if p.file_name() == Some(OsStr::new(filename)) && op.contains(notify::Op::RENAME) => break,
+                notify::RawEvent { path: Some(_), op: Ok(_), .. } => continue,
+                weird => {
+                    warn!("weird event: {:?}", weird);
+                    continue;
+                },
+            }
+        }
     }
-    let mut seen_filenames = HashSet::new();
-    let mut token_mapping = HashMap::new();
-    for token_line in csv::Reader::from_path(tokenfile)?.into_deserialize() {
-        let token_line: TokenLine = token_line?;
-        let protocol_start = format!("twc1 {}\n", token_line.token).into_bytes();
-        assert!(token_mapping.insert(protocol_start, token_line.filename.clone()).is_none(), "duplicate token");
-        assert!(seen_filenames.insert(token_line.filename), "duplicate filename");
-    }
-    mem::drop(seen_filenames);
-    let token_mapping = Arc::new(token_mapping);
-
-    info!("listening on {}", bindaddr);
-    let server = TcpListener::bind(bindaddr)?;
-    for stream in server.incoming() {
-        let stream = stream?;
-        let token_mapping = token_mapping.clone();
-        thread::spawn(move || handle_client(stream, token_mapping).unwrap());
-    }
-    Ok(())
+    */
 }
