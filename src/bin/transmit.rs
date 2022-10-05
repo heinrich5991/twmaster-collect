@@ -23,7 +23,9 @@ impl<'a, W: Write> Write for DeepFlusher<'a, W> {
         // We can't have unbuffered stdout in Rust, feature request is at
         // https://github.com/rust-lang/rust/issues/58326.
         //
-        // Instead, flush after every write.
+        // Instead, flush after every write. However, zstd doesn't forward
+        // flushes to the underlying reader, so we need to work around that:
+        // https://github.com/gyscos/zstd-rs/issues/170.
         self.0.get_mut().flush()?;
         Ok(())
     }
