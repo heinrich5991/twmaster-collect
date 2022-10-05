@@ -55,7 +55,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     info!("watching parent directory {:?}", parent_dir);
     watcher.watch(parent_dir, notify::RecursiveMode::NonRecursive)?;
 
-    let mut stream = DeepFlusher(zstd::Encoder::new(io::stdout().lock(), 0)?.auto_finish());
+    let stdout = io::stdout();
+    let mut stream = DeepFlusher(zstd::Encoder::new(stdout.lock(), 0)?.auto_finish());
     stream.write_all(format!("twc2\n").as_bytes())?;
     stream.flush()?;
 
