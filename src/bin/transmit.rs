@@ -6,13 +6,29 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
-use std::net::Shutdown;
-use std::net::TcpStream;
+use std::io;
 use std::path::Path;
 use std::sync::mpsc;
 
 #[macro_use]
 extern crate log;
+
+struct DeepFlusher<'a, W: Write>(zstd::stream::AutoFinishEncoder<'a, W>);
+
+impl<'a, W: Write> Write for DeepFlusher<'a, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()?;
+        // We can't have unbuffered stdout in Rust, feature request is at
+        // https://github.com/rust-lang/rust/issues/58326.
+        //
+        // Instead, flush after every write.
+        self.0.get_mut().flush()?;
+        Ok(())
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
@@ -28,21 +44,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             .default_value("servers.json")
             .help("File to watch")
         )
-        .arg(Arg::with_name("server")
-            .value_name("SERVER")
-            .required(true)
-            .help("Server to connect to via TCP")
-        )
-        .arg(Arg::with_name("token")
-            .value_name("TOKEN")
-            .required(true)
-            .help("Token to authenticate against the server")
-        )
         .get_matches();
 
     let filename = matches.value_of_os("file").unwrap();
-    let server = matches.value_of("server").unwrap();
-    let token = matches.value_of("token").unwrap();
 
     let (tx, rx) = mpsc::channel();
     let mut watcher = notify::raw_watcher(tx)?;
@@ -51,13 +55,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     info!("watching parent directory {:?}", parent_dir);
     watcher.watch(parent_dir, notify::RecursiveMode::NonRecursive)?;
 
-    info!("connecting to {}", server);
-    let stream = TcpStream::connect(server)?;
-    info!("connected");
-    stream.set_nodelay(true)?;
-    stream.shutdown(Shutdown::Read)?;
-    let mut stream = zstd::Encoder::new(stream, 0)?.auto_finish();
-    stream.write_all(format!("twc1 {}\n", token).as_bytes())?;
+    let mut stream = DeepFlusher(zstd::Encoder::new(io::stdout().lock(), 0)?.auto_finish());
+    stream.write_all(format!("twc2\n").as_bytes())?;
     stream.flush()?;
 
     loop {
