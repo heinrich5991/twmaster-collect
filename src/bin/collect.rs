@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .arg(Arg::with_name("args")
             .value_name("ARG")
             .multiple(true)
-            .help("Arguments passed to the commnd")
+            .help("Arguments passed to the command")
         )
         .get_matches();
 
