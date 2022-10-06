@@ -24,6 +24,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             .default_value("servers.json")
             .help("File to write to")
         )
+        .arg(Arg::with_name("only-updates")
+            .long("only-updates")
+            .help("Only transmit the file each time it is updated, not when it is just there")
+        )
         .arg(Arg::with_name("command")
             .value_name("COMMAND")
             .required(true)
@@ -37,6 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     let filename = matches.value_of("file").unwrap();
+    let only_updates = matches.is_present("only_updates");
     let command = matches.value_of_os("command").unwrap();
     let args = matches.values_of_os("args").unwrap_or_default();
 
@@ -57,6 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     info!("connection established");
     let temp_filename = format!("{}.tmp.{}", filename, process::id());
+    let mut first = true;
 
     loop {
         line.clear();
@@ -69,8 +75,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if line.last().copied() != Some(b'\n') {
             panic!("incomplete write");
         }
-        debug!("file received, writing");
-        fs::write(&temp_filename, &line)?;
-        fs::rename(&temp_filename, &filename)?;
+        if !first || !only_updates {
+            debug!("file received, writing");
+            fs::write(&temp_filename, &line)?;
+            fs::rename(&temp_filename, &filename)?;
+        } else {
+            debug!("file received, but ignoring initial state");
+        }
+        first = false;
     }
 }
