@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     let filename = matches.value_of("file").unwrap();
-    let only_updates = matches.is_present("only_updates");
+    let only_updates = matches.is_present("only-updates");
     let command = matches.value_of_os("command").unwrap();
     let args = matches.values_of_os("args").unwrap_or_default();
 
