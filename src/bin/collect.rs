@@ -7,18 +7,43 @@ use std::io::BufRead as _;
 use std::io::BufReader;
 use std::process::Command;
 use std::process;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 #[macro_use]
 extern crate log;
 
-struct DeleteFileOnDrop(String);
+struct DeleteFileOnDrop(Arc<Mutex<bool>>, String);
 
 impl Drop for DeleteFileOnDrop {
     fn drop(&mut self) {
-        if let Err(e) = fs::remove_file(&self.0) {
-            error!("couldn't delete file before quitting: {}", e);
+        delete_file_on_quit(&self.0, &self.1);
+    }
+}
+
+fn delete_file_on_quit(write_mutex: &Mutex<bool>, file: &str) {
+    info!("removing file before quitting");
+    {
+        let mut _guard = write_mutex.lock().unwrap_or_else(|e| e.into_inner());
+        // Already deleted?
+        if *_guard {
+            return;
+        }
+        if let Err(e) = remove_file_if_present(file) {
+            error!("failed to remove file: {}", e);
+        }
+        *_guard = true;
+    }
+}
+
+fn remove_file_if_present(file: &str) -> io::Result<()> {
+    let result = fs::remove_file(file);
+    if let Err(e) = &result {
+        if e.kind() == io::ErrorKind::NotFound {
+            return Ok(());
         }
     }
+    result
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -61,15 +86,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let command = matches.value_of_os("command").unwrap();
     let args = matches.values_of_os("args").unwrap_or_default();
 
+    let write_mutex = Arc::new(Mutex::new(false));
+
     let _delete_on_quit;
     if delete {
         debug!("deleting file if present");
-        if let Err(e) = fs::remove_file(filename) {
-            if e.kind() != io::ErrorKind::NotFound {
-                return Err(e.into());
-            }
-        }
-        _delete_on_quit = DeleteFileOnDrop(filename.to_owned());
+        remove_file_if_present(filename)?;
+
+        let handler_filename = filename.to_owned();
+        let handler_write_mutex = write_mutex.clone();
+        ctrlc::set_handler(move || {
+            delete_file_on_quit(&handler_write_mutex, &handler_filename);
+            process::exit(3);
+        })?;
+
+        _delete_on_quit = DeleteFileOnDrop(write_mutex.clone(), filename.to_owned());
     }
 
     info!("connecting...");
@@ -105,8 +136,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if !first || !only_updates {
             debug!("file received, writing");
-            fs::write(&temp_filename, &line)?;
-            fs::rename(&temp_filename, &filename)?;
+            {
+                let _guard = write_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                fs::write(&temp_filename, &line)?;
+                fs::rename(&temp_filename, &filename)?;
+            }
         } else {
             debug!("file received, but ignoring initial state");
         }
