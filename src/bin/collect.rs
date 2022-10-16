@@ -2,13 +2,24 @@ use clap::App;
 use clap::Arg;
 use std::error::Error;
 use std::fs;
-use std::io::BufRead;
+use std::io;
+use std::io::BufRead as _;
 use std::io::BufReader;
 use std::process::Command;
 use std::process;
 
 #[macro_use]
 extern crate log;
+
+struct DeleteFileOnDrop(String);
+
+impl Drop for DeleteFileOnDrop {
+    fn drop(&mut self) {
+        if let Err(e) = fs::remove_file(&self.0) {
+            error!("couldn't delete file before quitting: {}", e);
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
@@ -23,6 +34,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             .value_name("FILE")
             .default_value("servers.json")
             .help("File to write to")
+        )
+        .arg(Arg::with_name("delete")
+            .long("delete")
+            .help("Delete the target file before receiving it for the first time and before quitting")
         )
         .arg(Arg::with_name("only-updates")
             .long("only-updates")
@@ -41,10 +56,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     let filename = matches.value_of("file").unwrap();
+    let delete = matches.is_present("delete");
     let only_updates = matches.is_present("only-updates");
     let command = matches.value_of_os("command").unwrap();
     let args = matches.values_of_os("args").unwrap_or_default();
 
+    let _delete_on_quit;
+    if delete {
+        debug!("deleting file if present");
+        if let Err(e) = fs::remove_file(filename) {
+            if e.kind() != io::ErrorKind::NotFound {
+                return Err(e.into());
+            }
+        }
+        _delete_on_quit = DeleteFileOnDrop(filename.to_owned());
+    }
+
+    info!("connecting...");
     let mut child = Command::new(command)
         .args(args)
         .stdin(process::Stdio::null())
