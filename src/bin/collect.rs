@@ -4,11 +4,13 @@ use std::error::Error;
 use std::fs;
 use std::io;
 use std::io::BufRead as _;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter, Read};
 use std::process::Command;
 use std::process;
 use std::sync::Arc;
 use std::sync::Mutex;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 #[macro_use]
 extern crate log;
@@ -44,6 +46,18 @@ fn remove_file_if_present(file: &str) -> io::Result<()> {
         }
     }
     result
+}
+
+fn compress_file(input_path: &str, output_path: &str) -> std::io::Result<()> {
+    let input_file = fs::File::open(input_path)?;
+    let reader = BufReader::new(input_file);
+
+    let output_file = fs::File::create(output_path)?;
+    let writer = BufWriter::new(output_file);
+
+    let mut encoder = GzEncoder::new(writer, Compression::best());
+    std::io::copy(&mut reader.take(u64::MAX), &mut encoder)?;
+    encoder.finish()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -121,6 +135,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     info!("connection established");
     let temp_filename = format!("{}.tmp.{}", filename, process::id());
+    let gz_filename = format!("{}.gz", filename);
+    let temp_gz_filename = format!("{}.tmp.gz.{}", filename, process::id());
     let mut first = true;
 
     loop {
@@ -140,6 +156,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let _guard = write_mutex.lock().unwrap_or_else(|e| e.into_inner());
                 fs::write(&temp_filename, &line)?;
                 fs::rename(&temp_filename, &filename)?;
+                compress_file(filename, &temp_gz_filename)?;
+                fs::rename(&temp_gz_filename, &gz_filename)?;
             }
         } else {
             debug!("file received, but ignoring initial state");
