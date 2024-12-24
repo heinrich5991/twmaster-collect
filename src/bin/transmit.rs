@@ -1,13 +1,12 @@
 use clap::App;
 use clap::Arg;
 use memchr::memchr;
-use notify::Watcher;
 use std::error::Error;
 use std::fs;
 use std::io::Write;
 use std::io;
 use std::path::Path;
-use std::sync::mpsc;
+use twmaster_collect::FileWatcher;
 
 #[macro_use]
 extern crate log;
@@ -48,14 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     let path = Path::new(matches.value_of_os("file").unwrap());
-
-    let (tx, rx) = mpsc::channel();
-    let mut watcher = notify::raw_watcher(tx)?;
-    let parent_dir = path.parent().unwrap_or(Path::new(""));
-    let parent_dir = if !parent_dir.as_os_str().is_empty() { parent_dir } else { Path::new(".") };
-    let filename = path.file_name().expect("path must have filename");
-    info!("watching parent directory {:?}", parent_dir);
-    watcher.watch(parent_dir, notify::RecursiveMode::NonRecursive)?;
+    let watcher = FileWatcher::new(path)?;
 
     let stdout = io::stdout();
     let mut stream = DeepFlusher(zstd::Encoder::new(stdout.lock(), 0)?.auto_finish());
@@ -79,15 +71,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         stream.flush()?;
 
         debug!("waiting for file changes");
-        loop {
-            match rx.recv().unwrap() {
-                notify::RawEvent { path: Some(p), op: Ok(op), .. } if p.file_name() == Some(filename) && op.contains(notify::Op::RENAME) => break,
-                notify::RawEvent { path: Some(_), op: Ok(_), .. } => continue,
-                weird => {
-                    warn!("weird event: {:?}", weird);
-                    continue;
-                },
-            }
-        }
+        watcher.wait_for_event();
     }
 }
