@@ -2,49 +2,18 @@ use clap::App;
 use clap::Arg;
 use std::error::Error;
 use std::fs;
-use std::io;
 use std::io::BufRead as _;
 use std::io::BufReader;
 use std::process::Command;
 use std::process;
 use std::sync::Arc;
 use std::sync::Mutex;
+use twmaster_collect::RemoveFileOnDrop;
+use twmaster_collect::remove_file_if_present;
+use twmaster_collect::remove_file_on_quit;
 
 #[macro_use]
 extern crate log;
-
-struct DeleteFileOnDrop(Arc<Mutex<bool>>, String);
-
-impl Drop for DeleteFileOnDrop {
-    fn drop(&mut self) {
-        delete_file_on_quit(&self.0, &self.1);
-    }
-}
-
-fn delete_file_on_quit(write_mutex: &Mutex<bool>, file: &str) {
-    info!("removing file before quitting");
-    {
-        let mut _guard = write_mutex.lock().unwrap_or_else(|e| e.into_inner());
-        // Already deleted?
-        if *_guard {
-            return;
-        }
-        if let Err(e) = remove_file_if_present(file) {
-            error!("failed to remove file: {}", e);
-        }
-        *_guard = true;
-    }
-}
-
-fn remove_file_if_present(file: &str) -> io::Result<()> {
-    let result = fs::remove_file(file);
-    if let Err(e) = &result {
-        if e.kind() == io::ErrorKind::NotFound {
-            return Ok(());
-        }
-    }
-    result
-}
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
@@ -88,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let write_mutex = Arc::new(Mutex::new(false));
 
-    let _delete_on_quit;
+    let _remove_on_quit;
     if delete {
         debug!("deleting file if present");
         remove_file_if_present(filename)?;
@@ -96,11 +65,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let handler_filename = filename.to_owned();
         let handler_write_mutex = write_mutex.clone();
         ctrlc::set_handler(move || {
-            delete_file_on_quit(&handler_write_mutex, &handler_filename);
+            remove_file_on_quit(&handler_write_mutex, &handler_filename);
             process::exit(3);
         })?;
 
-        _delete_on_quit = DeleteFileOnDrop(write_mutex.clone(), filename.to_owned());
+        _remove_on_quit = RemoveFileOnDrop(write_mutex.clone(), filename.to_owned());
     }
 
     info!("connecting...");
